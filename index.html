@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KeyDesk – User Account & Access Control</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;500;700&display=swap">
+<style>
+:root{--bg:#eef1f0;--card:#fff;--tx:#14211f;--mu:#5d6b68;--bd:#d6dddb;--ac:#0f6b62;--acx:#fff;--ok:#12805c;--er:#b42318;--wa:#9a6700;--side:#14211f;--sidetx:#cfdad7}
+@media(prefers-color-scheme:dark){:root{--bg:#0e1514;--card:#17201f;--tx:#e6eeec;--mu:#92a29e;--bd:#2a3836;--ac:#4cc3b3;--acx:#06201c;--ok:#4cd3a0;--er:#ff8a7a;--wa:#f2c14e;--side:#0a0f0e;--sidetx:#a9bab6}}
+*{box-sizing:border-box}
+body{margin:0;font:15px/1.5 "Public Sans",system-ui,sans-serif;background:var(--bg);color:var(--tx)}
+h1,h2,h3{margin:0 0 .5rem;line-height:1.2}
+button,input,select{font:inherit;color:inherit}
+input,select{width:100%;padding:.55rem .7rem;border:1px solid var(--bd);border-radius:6px;background:var(--card)}
+:focus-visible{outline:2px solid var(--ac);outline-offset:2px}
+button{cursor:pointer;border:1px solid var(--bd);background:var(--card);padding:.45rem .8rem;border-radius:6px}
+button.p{background:var(--ac);color:var(--acx);border-color:var(--ac);font-weight:500}
+button.d{color:var(--er)}
+label{display:block;font-size:13px;color:var(--mu);margin:.7rem 0 .2rem}
+.login{max-width:380px;margin:12vh auto;padding:0 1rem}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:8px;padding:1.2rem;margin-bottom:1rem}
+.app{display:grid;grid-template-columns:220px 1fr;min-height:100vh}
+aside{background:var(--side);color:var(--sidetx);padding:1.2rem .8rem;display:flex;flex-direction:column;gap:.2rem}
+aside b{color:#fff;font-size:18px;padding:0 .6rem 1rem}
+aside button{background:none;border:0;color:inherit;text-align:left;padding:.55rem .6rem;border-radius:6px}
+aside button.on{background:var(--ac);color:var(--acx)}
+aside .who{margin-top:auto;font-size:13px;padding:.6rem}
+main{padding:1.5rem;min-width:0}
+.wrap{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:14px}
+th,td{text-align:left;padding:.5rem .6rem;border-bottom:1px solid var(--bd);white-space:nowrap}
+th{color:var(--mu);font-weight:500}
+.tag{padding:.1rem .5rem;border-radius:99px;font-size:12px;border:1px solid currentColor}
+.ok{color:var(--ok)}.er{color:var(--er)}.wa{color:var(--wa)}.mu{color:var(--mu)}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:.8rem}
+.stats div{border:1px solid var(--bd);border-radius:8px;padding:.8rem;background:var(--card)}
+.stats b{display:block;font-size:26px}
+.row{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;margin-bottom:.8rem}
+.row h2{margin:0;margin-right:auto}
+.msg{padding:.6rem .8rem;border-radius:6px;margin:.6rem 0;border:1px solid var(--bd)}
+.bar{height:6px;background:var(--bd);border-radius:4px;margin-top:.4rem;overflow:hidden}
+.bar i{display:block;height:100%;background:var(--ac)}
+dialog{border:1px solid var(--bd);border-radius:10px;background:var(--card);color:var(--tx);width:min(440px,92vw)}
+dialog::backdrop{background:#0008}
+ul.pol{margin:.3rem 0;padding-left:1.1rem;color:var(--mu);font-size:13px}
+@media(max-width:720px){.app{grid-template-columns:1fr}aside{flex-direction:row;flex-wrap:wrap}aside .who{margin:0}}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<dialog id="dlg"></dialog>
+<script>
+const $=s=>document.querySelector(s), esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const KEY='keydesk.v1', MAXFAIL=5, LOCK_MIN=15, EXPIRY_DAYS=90, fmt=t=>new Date(t).toLocaleString();
+const PERMS={'users.view':'View users','users.create':'Create users','users.edit':'Change roles','users.status':'Activate / deactivate','users.reset':'Reset passwords','roles.manage':'Manage roles','logs.view':'View login history','audit.view':'View audit trail'};
+let db=null,me=null,tab='dash',force=false,note='';
+try{db=JSON.parse(localStorage.getItem(KEY))}catch(e){}
+const save=()=>{try{localStorage.setItem(KEY,JSON.stringify(db))}catch(e){}};
+const can=p=>me&&db.roles[me.role]&&db.roles[me.role].includes(p);
+const rnd=n=>crypto.getRandomValues(new Uint32Array(1))[0]%n;
+async function hash(pw,salt){const b=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(salt+pw));return [...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,'0')).join('')}
+const salt=()=>[...crypto.getRandomValues(new Uint8Array(12))].map(x=>x.toString(16).padStart(2,'0')).join('');
+function gen(){const s=['ABCDEFGHJKLMNPQRSTUVWXYZ','abcdefghijkmnopqrstuvwxyz','23456789','!@#$%&*?'],all=s.join('');let p=s.map(x=>x[rnd(x.length)]);while(p.length<12)p.push(all[rnd(all.length)]);return p.sort(()=>rnd(3)-1).join('')}
+function score(pw){return [pw.length>=8,/[A-Z]/.test(pw),/[a-z]/.test(pw),/\d/.test(pw),/[^A-Za-z0-9]/.test(pw)].filter(Boolean).length}
+async function policy(pw,u){const e=[];if(pw.length<8)e.push('at least 8 characters');if(!/[A-Z]/.test(pw))e.push('an uppercase letter');if(!/[a-z]/.test(pw))e.push('a lowercase letter');if(!/\d/.test(pw))e.push('a number');if(!/[^A-Za-z0-9]/.test(pw))e.push('a symbol');
+ if(u&&u.username&&pw.toLowerCase().includes(u.username))e.push('no username inside the password');
+ if(u&&u.hist){for(const h of u.hist){if(await hash(pw,h.s)===h.h){e.push('a password you have not used in your last 3');break}}}
+ return e}
+async function setPw(u,pw){const s=salt();u.hist=[{s:u.salt,h:u.hash},...(u.hist||[])].filter(h=>h.h).slice(0,2);u.salt=s;u.hash=await hash(pw,s);u.pwAt=Date.now()}
+function logA(action,target,detail=''){db.audit.unshift({t:Date.now(),actor:me?me.username:'system',action,target,detail});db.audit.length=Math.min(db.audit.length,500);save()}
+function logL(username,ok,reason){db.logins.unshift({t:Date.now(),username,ok,reason});db.logins.length=Math.min(db.logins.length,500);save()}
+const expired=u=>Date.now()-u.pwAt>EXPIRY_DAYS*864e5;
+async function init(){
+ if(!db||!db.users){const all=Object.keys(PERMS);
+  db={roles:{Admin:all,Manager:['users.view','users.create','users.edit','users.status','users.reset','logs.view'],Auditor:['users.view','logs.view','audit.view'],Staff:[],Student:[]},users:[],logins:[],audit:[]};
+  const a={id:1,name:'System Administrator',username:'admin',email:'admin@example.org',type:'Employee',role:'Admin',active:true,fails:0,lockedUntil:0,mustChange:true,created:Date.now(),lastLogin:0};
+  await setPw(a,'Admin@12345');db.users.push(a);save();logA('Seed','admin','Default administrator created')}
+ render()}
+/* ---------- login ---------- */
+async function doLogin(e){e.preventDefault();const un=$('#lu').value.trim().toLowerCase(),pw=$('#lp').value,u=db.users.find(x=>x.username===un);
+ const bad=r=>{logL(un,false,r);note=r;render()};
+ if(!u)return bad('Username or password is incorrect.');
+ if(!u.active)return bad('This account is deactivated. Contact an administrator.');
+ if(u.lockedUntil>Date.now())return bad('Account locked until '+fmt(u.lockedUntil)+'.');
+ if(await hash(pw,u.salt)!==u.hash){u.fails++;let r='Username or password is incorrect.';
+  if(u.fails>=MAXFAIL){u.lockedUntil=Date.now()+LOCK_MIN*6e4;u.fails=0;r='Too many attempts. Account locked for '+LOCK_MIN+' minutes.';me=null;logA('Account locked',un,'Failed attempts')}
+  save();return bad(r)}
+ u.fails=0;u.lastLogin=Date.now();me=u;logL(un,true,'Signed in');logA('Login',un);
+ force=u.mustChange||expired(u);tab=force?'me':'dash';note=force?'Your password must be changed before you continue.':'';render()}
+function logout(){logA('Logout',me.username);me=null;force=false;note='';render()}
+/* ---------- views ---------- */
+function render(){const r=$('#root');
+ if(!me){r.innerHTML=`<form class="login card" onsubmit="doLogin(event)"><h1>KeyDesk</h1><p class="mu">Sign in to manage accounts and access.</p>${note?`<div class="msg er">${esc(note)}</div>`:''}
+  <label for="lu">Username</label><input id="lu" autocomplete="username" required><label for="lp">Password</label><input id="lp" type="password" autocomplete="current-password" required>
+  <p><button class="p" style="width:100%">Sign in</button></p><p class="mu" style="font-size:13px">First run: admin / Admin@12345 (you will be asked to change it).</p></form>`;return}
+ const T=[['dash','Dashboard',1],['users','Users',can('users.view')],['roles','Roles & permissions',can('roles.manage')],['logins','Login history',can('logs.view')],['audit','Audit trail',can('audit.view')],['me','My account',1]];
+ r.innerHTML=`<div class="app"><aside><b>KeyDesk</b>${T.filter(t=>t[2]&&(!force||t[0]=='me')).map(t=>`<button class="${tab==t[0]?'on':''}" data-tab="${t[0]}">${t[1]}</button>`).join('')}
+  <div class="who">${esc(me.name)}<br><span class="mu">${esc(me.role)}</span><br><button data-act="out" style="margin-top:.5rem">Sign out</button></div></aside><main>${note?`<div class="msg wa">${esc(note)}</div>`:''}${views[tab]()}</main></div>`}
+const views={
+dash(){const U=db.users,day=Date.now()-864e5,f=db.logins.filter(l=>!l.ok&&l.t>day).length;
+ return `<h2>Dashboard</h2><div class="stats"><div><b>${U.length}</b>Accounts</div><div><b class="ok">${U.filter(u=>u.active).length}</b>Active</div><div><b class="mu">${U.filter(u=>!u.active).length}</b>Deactivated</div><div><b class="wa">${U.filter(u=>u.lockedUntil>Date.now()).length}</b>Locked now</div><div><b class="er">${f}</b>Failed logins, 24 h</div></div>
+ <div class="card" style="margin-top:1rem"><h3>Your access</h3><p>${can('roles.manage')||me.role=='Admin'?'':''}Role <b>${esc(me.role)}</b> allows: ${db.roles[me.role].map(p=>PERMS[p]).join(', ')||'basic access only'}.</p></div>`},
+users(){const rows=db.users.map(u=>{const lk=u.lockedUntil>Date.now();return `<tr><td>${esc(u.name)}<br><span class="mu">${esc(u.email)}</span></td><td>${esc(u.username)}</td><td>${esc(u.type)}</td>
+ <td>${can('users.edit')?`<select data-role="${u.id}">${Object.keys(db.roles).map(r=>`<option${r==u.role?' selected':''}>${esc(r)}</option>`).join('')}</select>`:esc(u.role)}</td>
+ <td><span class="tag ${!u.active?'mu':lk?'wa':'ok'}">${!u.active?'Deactivated':lk?'Locked':'Active'}</span></td><td>${u.lastLogin?fmt(u.lastLogin):'Never'}</td>
+ <td>${can('users.status')?`<button data-tog="${u.id}">${u.active?'Deactivate':'Activate'}</button> `:''}${can('users.reset')?`<button data-rst="${u.id}">Reset password</button>`:''}</td></tr>`}).join('');
+ return `<div class="row"><h2>Users</h2>${can('users.create')?'<button class="p" data-act="new">New account</button>':''}</div><div class="card wrap"><table><tr><th>Name</th><th>Username</th><th>Type</th><th>Role</th><th>Status</th><th>Last login</th><th></th></tr>${rows}</table></div>`},
+roles(){const R=Object.keys(db.roles);return `<div class="row"><h2>Roles & permissions</h2><input id="nr" placeholder="New role name" style="width:180px"><button data-act="addrole">Add role</button></div>
+ <div class="card wrap"><table><tr><th>Permission</th>${R.map(r=>`<th>${esc(r)}</th>`).join('')}</tr>${Object.entries(PERMS).map(([k,v])=>`<tr><td>${v}</td>${R.map(r=>`<td><input type="checkbox" style="width:auto" data-perm="${r}|${k}"${db.roles[r].includes(k)?' checked':''}${r=='Admin'?' disabled':''} aria-label="${esc(r)}: ${v}"></td>`).join('')}</tr>`).join('')}</table></div><p class="mu">Admin always keeps every permission so the system cannot be locked out.</p>`},
+logins(){return `<div class="row"><h2>Login history</h2><button data-csv="logins">Export CSV</button></div><div class="card wrap"><table><tr><th>Time</th><th>Username</th><th>Result</th><th>Detail</th></tr>${db.logins.map(l=>`<tr><td>${fmt(l.t)}</td><td>${esc(l.username)}</td><td class="${l.ok?'ok':'er'}">${l.ok?'Success':'Failed'}</td><td>${esc(l.reason)}</td></tr>`).join('')||'<tr><td colspan=4 class="mu">No sign-ins recorded yet.</td></tr>'}</table></div>`},
+audit(){return `<div class="row"><h2>Audit trail</h2><button data-csv="audit">Export CSV</button></div><div class="card wrap"><table><tr><th>Time</th><th>Actor</th><th>Action</th><th>Target</th><th>Detail</th></tr>${db.audit.map(a=>`<tr><td>${fmt(a.t)}</td><td>${esc(a.actor)}</td><td>${esc(a.action)}</td><td>${esc(a.target)}</td><td>${esc(a.detail)}</td></tr>`).join('')}</table></div>`},
+me(){return `<h2>My account</h2><form class="card" id="pwf" style="max-width:420px"><h3>Change password</h3><label for="p0">Current password</label><input id="p0" type="password" autocomplete="current-password" required>
+ <label for="p1">New password</label><input id="p1" type="password" autocomplete="new-password" required><div class="bar"><i id="sb" style="width:0"></i></div>
+ <label for="p2">Confirm new password</label><input id="p2" type="password" autocomplete="new-password" required><div id="pe" class="er" style="margin-top:.5rem"></div>
+ <ul class="pol"><li>8+ characters with upper, lower, number and symbol</li><li>Not your username, not one of your last 3 passwords</li><li>Expires every ${EXPIRY_DAYS} days</li></ul><button class="p">Save password</button></form>`}};
+/* ---------- events ---------- */
+document.addEventListener('click',async e=>{const t=e.target.closest('button');if(!t||!me)return;const d=t.dataset;
+ if(d.tab){tab=d.tab;note='';render()}
+ else if(d.act=='out')logout();
+ else if(d.act=='new')openNew();
+ else if(d.act=='addrole'){const n=$('#nr').value.trim();if(n&&!db.roles[n]){db.roles[n]=[];logA('Role created',n);render()}}
+ else if(d.tog){const u=db.users.find(x=>x.id==d.tog);if(u.id==me.id)return alert('You cannot deactivate your own account.');
+  if(u.active&&u.role=='Admin'&&db.users.filter(x=>x.role=='Admin'&&x.active).length<2)return alert('At least one active Admin is required.');
+  u.active=!u.active;u.lockedUntil=0;logA(u.active?'Account activated':'Account deactivated',u.username);save();render()}
+ else if(d.rst){const u=db.users.find(x=>x.id==d.rst),p=gen();await setPw(u,p);u.mustChange=true;u.hist=[];u.fails=0;u.lockedUntil=0;logA('Password reset',u.username);save();alert('Temporary password for '+u.username+':\n\n'+p+'\n\nThey must change it at next sign-in.');render()}
+ else if(d.csv){const rows=d.csv=='logins'?[['Time','Username','Result','Detail'],...db.logins.map(l=>[fmt(l.t),l.username,l.ok?'Success':'Failed',l.reason])]:[['Time','Actor','Action','Target','Detail'],...db.audit.map(a=>[fmt(a.t),a.actor,a.action,a.target,a.detail])];
+  const b=new Blob([rows.map(r=>r.map(c=>'"'+String(c).replace(/"/g,'""')+'"').join(',')).join('\n')],{type:'text/csv'}),a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=d.csv+'-report.csv';a.click();logA('Report exported',d.csv)}});
+document.addEventListener('change',e=>{const t=e.target;if(!me)return;
+ if(t.dataset.role){const u=db.users.find(x=>x.id==t.dataset.role);if(u.role=='Admin'&&t.value!='Admin'&&db.users.filter(x=>x.role=='Admin'&&x.active).length<2){alert('At least one active Admin is required.');return render()}logA('Role changed',u.username,u.role+' → '+t.value);u.role=t.value;save();render()}
+ if(t.dataset.perm){const[r,p]=t.dataset.perm.split('|'),a=db.roles[r];t.checked?a.includes(p)||a.push(p):db.roles[r]=a.filter(x=>x!=p);logA('Permission '+(t.checked?'granted':'revoked'),r,PERMS[p]);save()}});
+document.addEventListener('input',e=>{if(e.target.id=='p1'){const s=score(e.target.value);const b=$('#sb');b.style.width=s*20+'%'}});
+document.addEventListener('submit',async e=>{if(e.target.id!='pwf')return;e.preventDefault();
+ const p0=$('#p0').value,p1=$('#p1').value,p2=$('#p2').value,er=$('#pe');
+ if(await hash(p0,me.salt)!==me.hash)return er.textContent='Current password is incorrect.';
+ if(p1!==p2)return er.textContent='New passwords do not match.';
+ const errs=await policy(p1,me);if(errs.length)return er.textContent='New password needs: '+errs.join(', ')+'.';
+ await setPw(me,p1);me.mustChange=false;force=false;logA('Password changed',me.username);save();tab='dash';note='Password updated.';render()});
+function openNew(){const d=$('#dlg');d.innerHTML=`<form id="nf"><h3>New account</h3><label>Full name</label><input id="n1" required><label>Username</label><input id="n2" required pattern="[A-Za-z0-9._-]{3,}" title="3+ letters, numbers, dots, dashes">
+ <label>Email</label><input id="n3" type="email" required><label>Account type</label><select id="n4"><option>Employee</option><option>Student</option></select>
+ <label>Role</label><select id="n5">${Object.keys(db.roles).map(r=>`<option>${esc(r)}</option>`).join('')}</select><label>Temporary password</label><input id="n6" value="${gen()}" required>
+ <div id="ne" class="er" style="margin:.5rem 0"></div><div class="row"><button type="button" id="nc">Cancel</button><button class="p">Create account</button></div></form>`;d.showModal();
+ $('#nc').onclick=()=>d.close();
+ $('#nf').onsubmit=async ev=>{ev.preventDefault();const un=$('#n2').value.trim().toLowerCase(),pw=$('#n6').value;
+  if(db.users.some(u=>u.username===un))return $('#ne').textContent='That username is taken.';
+  const errs=await policy(pw,{username:un});if(errs.length)return $('#ne').textContent='Password needs: '+errs.join(', ')+'.';
+  const u={id:Date.now(),name:$('#n1').value.trim(),username:un,email:$('#n3').value.trim(),type:$('#n4').value,role:$('#n5').value,active:true,fails:0,lockedUntil:0,mustChange:true,created:Date.now(),lastLogin:0};
+  await setPw(u,pw);db.users.push(u);logA('Account created',un,u.role+' / '+u.type);save();d.close();render();alert('Account created. Share this temporary password securely:\n\n'+pw)}}
+init();
+</script>
+</body>
+</html>
