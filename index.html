@@ -93,7 +93,7 @@ function logout(){logA('Logout',me.username);me=null;force=false;note='';render(
 function render(){const r=$('#root');
  if(!me){r.innerHTML=`<form class="login card" onsubmit="doLogin(event)"><h1>KeyDesk</h1><p class="mu">Sign in to manage accounts and access.</p>${note?`<div class="msg er">${esc(note)}</div>`:''}
   <label for="lu">Username</label><input id="lu" autocomplete="username" required><label for="lp">Password</label><input id="lp" type="password" autocomplete="current-password" required>
-  <p><button class="p" style="width:100%">Sign in</button></p><p class="mu" style="font-size:13px">First run: admin / Admin@12345 (you will be asked to change it).</p></form>`;return}
+  <p><button class="p" style="width:100%">Sign in</button></p></form>`;return}
  const T=[['dash','Dashboard',1],['users','Users',can('users.view')],['roles','Roles & permissions',can('roles.manage')],['logins','Login history',can('logs.view')],['audit','Audit trail',can('audit.view')],['me','My account',1]];
  r.innerHTML=`<div class="app"><aside><b>KeyDesk</b>${T.filter(t=>t[2]&&(!force||t[0]=='me')).map(t=>`<button class="${tab==t[0]?'on':''}" data-tab="${t[0]}">${t[1]}</button>`).join('')}
   <div class="who">${esc(me.name)}<br><span class="mu">${esc(me.role)}</span><br><button data-act="out" style="margin-top:.5rem">Sign out</button></div></aside><main>${note?`<div class="msg wa">${esc(note)}</div>`:''}${views[tab]()}</main></div>`}
